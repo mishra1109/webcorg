@@ -606,11 +606,6 @@
             cursor: pointer;
             font-weight: 600;
             font-size: 15px;
-            transition: all 0.3s;
-        }
-
-        .password-prompt button:hover {
-            background: #5568d3;
         }
 
         .admin-tabs {
@@ -788,8 +783,8 @@
         </div>
         <div id="adminContent" class="hidden">
             <div class="admin-tabs">
-                <button class="admin-tab active" onclick="showAdminTab('users', event)">All Users</button>
-                <button class="admin-tab" onclick="showAdminTab('chats', event)">All Chats</button>
+                <button class="admin-tab active" onclick="showAdminTab('users')">All Users</button>
+                <button class="admin-tab" onclick="showAdminTab('chats')">All Chats</button>
             </div>
             <div class="admin-content" id="adminContentArea"></div>
         </div>
@@ -841,10 +836,9 @@
         let messageHistory = {};
         let allRegisteredUsers = {};
 
-        const WS_SERVER_URL = 'wss://webcorg-ge7m.onrender.com';
-        const API_URL = 'https://webcorg-ge7m.onrender.com';
-        const GOOGLE_CLIENT_ID = '242071483191-ahqjch8v8s4spdhshufu86dfv197nrf3.apps.googleusercontent.com';
-        const ADMIN_PASSWORD = 'suyash';
+        const WS_SERVER_URL = 'wss://webcorg.onrender.com';
+        const API_URL = 'https://webcorg.onrender.com';
+        const GOOGLE_CLIENT_ID = '493500740840-10vldqltc4869b9o5luacjpus9kcrng3.apps.googleusercontent.com';
 
         function initWebSocket() {
             updateConnectionStatus('connecting');
@@ -942,4 +936,578 @@
                     
                 case 'user_join':
                     if (data.email !== currentUser.email) {
-                        allUsers[data.email]
+                        allUsers[data.email] = {
+                            name: data.name,
+                            email: data.email,
+                            picture: data.picture,
+                            online: true
+                        };
+                        updateMembersList();
+                    }
+                    break;
+                    
+                case 'user_left':
+                    if (allUsers[data.email]) {
+                        allUsers[data.email].online = false;
+                    }
+                    updateMembersList();
+                    break;
+                    
+                case 'chat_message':
+                    const chatId = getChatId(data.from, currentUser.email);
+                    if (!messageHistory[chatId]) {
+                        messageHistory[chatId] = [];
+                    }
+                    messageHistory[chatId].push(data.message);
+                    
+                    if (currentChatUser && currentChatUser.email === data.from) {
+                        displayMessage(data.message, false);
+                    }
+                    break;
+            }
+        }
+
+        async function saveUser() {
+            try {
+                await fetch(`${API_URL}/api/save-user`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentUser)
+                });
+            } catch (e) {
+                console.error('Error saving user:', e);
+            }
+        }
+
+        async function loadChatHistoryFromServer() {
+            try {
+                const res = await fetch(`${API_URL}/api/messages/${currentUser.email}`);
+                const data = await res.json();
+                
+                data.messages.forEach(msg => {
+                    const otherEmail = msg.from === currentUser.email ? msg.to : msg.from;
+                    const chatId = getChatId(currentUser.email, otherEmail);
+                    
+                    if (!messageHistory[chatId]) {
+                        messageHistory[chatId] = [];
+                    }
+                    messageHistory[chatId].push(msg.message);
+                });
+            } catch (e) {
+                console.error('Error loading chat history:', e);
+            }
+        }
+
+        function initGoogleSignIn() {
+            google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: handleCredentialResponse
+            });
+
+            google.accounts.id.renderButton(
+                document.getElementById('googleSignInButton'),
+                { 
+                    theme: 'outline', 
+                    size: 'large',
+                    text: 'signin_with',
+                    width: 320
+                }
+            );
+
+            const savedUser = localStorage.getItem('webcorg_user');
+            if (savedUser) {
+                currentUser = JSON.parse(savedUser);
+                showHomePage();
+                loadChatHistoryFromServer();
+            }
+        }
+
+        async function handleCredentialResponse(response) {
+            const payload = parseJwt(response.credential);
+            
+            currentUser = {
+                name: payload.name,
+                email: payload.email,
+                picture: payload.picture
+            };
+
+            localStorage.setItem('webcorg_user', JSON.stringify(currentUser));
+            await saveUser();
+            await loadChatHistoryFromServer();
+            showHomePage();
+        }
+
+        function showHomePage() {
+            allUsers[currentUser.email] = currentUser;
+
+            document.getElementById('dashboardName').textContent = currentUser.name;
+            document.getElementById('dashboardEmail').textContent = currentUser.email;
+            document.getElementById('dashboardProfilePic').src = currentUser.picture;
+
+            document.getElementById('signInPage').classList.add('hidden');
+            document.getElementById('homePage').classList.remove('hidden');
+            document.getElementById('dashboardBtn').classList.remove('hidden');
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                sendUserJoin();
+            }
+        }
+
+        function parseJwt(token) {
+            const base64Url = token.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join(''));
+            return JSON.parse(jsonPayload);
+        }
+
+        function toggleDashboard() {
+            const sidebar = document.getElementById('dashboardSidebar');
+            const overlay = document.getElementById('overlay');
+            
+            sidebar.classList.toggle('active');
+            overlay.classList.toggle('active');
+        }
+
+        async function openMembers() {
+            document.getElementById('membersWindow').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+            document.getElementById('dashboardSidebar').classList.remove('active');
+            
+            try {
+                const res = await fetch(`${API_URL}/api/admin/users`);
+                const data = await res.json();
+                allRegisteredUsers = data.users;
+            } catch (e) {
+                console.error('Error loading users:', e);
+            }
+            
+            updateMembersList();
+        }
+
+        function closeMembers() {
+            document.getElementById('membersWindow').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        function updateMembersList() {
+            const list = document.getElementById('membersList');
+            list.innerHTML = '';
+
+            const combinedUsers = { ...allRegisteredUsers };
+            Object.keys(allUsers).forEach(email => {
+                if (email !== currentUser.email) {
+                    combinedUsers[email] = { ...allUsers[email], online: true };
+                }
+            });
+
+            let hasOthers = false;
+            for (let email in combinedUsers) {
+                if (email === currentUser.email) continue;
+                hasOthers = true;
+                
+                const user = combinedUsers[email];
+                const isOnline = allUsers[email] && allUsers[email].online;
+                const item = document.createElement('div');
+                item.className = 'member-item';
+                item.innerHTML = `
+                    <div class="member-info">
+                        <img src="${user.picture}" alt="${user.name}">
+                        <div class="member-details">
+                            <h4>${user.name}<span class="${isOnline ? 'online-badge' : 'offline-badge'}"></span></h4>
+                            <p>${user.email}</p>
+                        </div>
+                    </div>
+                    <button class="chat-btn" onclick='openChat(${JSON.stringify(user)})'>Chat</button>
+                `;
+                list.appendChild(item);
+            }
+
+            if (!hasOthers) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">👥</div>
+                        <p><strong>No other members registered yet</strong></p>
+                        <p style="font-size: 13px; margin-top: 10px;">Share webcorg.com with friends to start chatting!</p>
+                    </div>
+                `;
+            }
+        }
+
+        function openChat(user) {
+            currentChatUser = user;
+            
+            document.getElementById('chatUserName').textContent = user.name;
+            document.getElementById('chatUserEmail').textContent = user.email;
+            document.getElementById('chatUserPic').src = user.picture;
+            
+            document.getElementById('chatWindow').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+            document.getElementById('membersWindow').classList.remove('active');
+            
+            loadChatHistory();
+        }
+
+        function closeChat() {
+            document.getElementById('chatWindow').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+            currentChatUser = null;
+        }
+
+        function getChatId(email1, email2) {
+            return [email1, email2].sort().join('_');
+        }
+
+        function loadChatHistory() {
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.innerHTML = '';
+            
+            const chatId = getChatId(currentUser.email, currentChatUser.email);
+            const messages = messageHistory[chatId] || [];
+            
+            messages.forEach(msg => {
+                const isSent = msg.sender === currentUser.email;
+                displayMessage(msg, isSent);
+            });
+            
+            scrollToBottom();
+        }
+
+        function displayMessage(message, isSent) {
+            const messagesContainer = document.getElementById('chatMessages');
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isSent ? 'sent' : 'received'}`;
+            
+            messageDiv.innerHTML = `
+                <div class="message-bubble">${message.text}</div>
+                <div class="message-info">
+                    <img src="${message.picture}" alt="${message.senderName}">
+                    <span>${message.senderName}</span>
+                    <span>•</span>
+                    <span>${message.time}</span>
+                </div>
+            `;
+            
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            
+            if (!text || !currentChatUser) return;
+            
+            const now = new Date();
+            const message = {
+                text: text,
+                sender: currentUser.email,
+                senderName: currentUser.name,
+                picture: currentUser.picture,
+                time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+            };
+            
+            const chatId = getChatId(currentUser.email, currentChatUser.email);
+            if (!messageHistory[chatId]) {
+                messageHistory[chatId] = [];
+            }
+            messageHistory[chatId].push(message);
+            
+            displayMessage(message, true);
+            
+            try {
+                await fetch(`${API_URL}/api/save-message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        from: currentUser.email,
+                        to: currentChatUser.email,
+                        message: message
+                    })
+                });
+            } catch (e) {
+                console.error('Error saving message:', e);
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'chat_message',
+                    from: currentUser.email,
+                    to: currentChatUser.email,
+                    message: message
+                }));
+            }
+            
+            input.value = '';
+        }
+
+        function handleEnter(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function scrollToBottom() {
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function openChatHistory() {
+            document.getElementById('chatHistoryWindow').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+            document.getElementById('dashboardSidebar').classList.remove('active');
+            
+            const list = document.getElementById('chatHistoryList');
+            list.innerHTML = '';
+            
+            const chatsMap = {};
+            
+            for (let chatId in messageHistory) {
+                const emails = chatId.split('_');
+                const otherEmail = emails[0] === currentUser.email ? emails[1] : emails[0];
+                const otherUser = allRegisteredUsers[otherEmail] || allUsers[otherEmail];
+                
+                if (otherUser) {
+                    chatsMap[otherEmail] = {
+                        user: otherUser,
+                        messages: messageHistory[chatId]
+                    };
+                }
+            }
+            
+            if (Object.keys(chatsMap).length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💬</div>
+                        <p><strong>No chat history yet</strong></p>
+                        <p style="font-size: 13px; margin-top: 10px;">Start a conversation to see your chat history here</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            for (let email in chatsMap) {
+                const chat = chatsMap[email];
+                const lastMsg = chat.messages[chat.messages.length - 1];
+                
+                const item = document.createElement('div');
+                item.className = 'member-item';
+                item.style.cursor = 'pointer';
+                item.onclick = () => {
+                    closeChatHistory();
+                    openChat(chat.user);
+                };
+                
+                item.innerHTML = `
+                    <div class="member-info">
+                        <img src="${chat.user.picture}" alt="${chat.user.name}">
+                        <div class="member-details">
+                            <h4>${chat.user.name}</h4>
+                            <p>${lastMsg.text.substring(0, 50)}${lastMsg.text.length > 50 ? '...' : ''}</p>
+                        </div>
+                    </div>
+                    <button class="chat-btn" onclick='event.stopPropagation(); openChat(${JSON.stringify(chat.user)})'>Open</button>
+                `;
+                list.appendChild(item);
+            }
+        }
+
+        function closeChatHistory() {
+            document.getElementById('chatHistoryWindow').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        function openAdminPanel() {
+            document.getElementById('adminPanel').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+            document.getElementById('dashboardSidebar').classList.remove('active');
+            document.getElementById('adminPasswordPrompt').classList.remove('hidden');
+            document.getElementById('adminContent').classList.add('hidden');
+        }
+
+        function closeAdminPanel() {
+            document.getElementById('adminPanel').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        async function verifyAdmin() {
+            const password = document.getElementById('adminPassword').value;
+            
+            try {
+                const res = await fetch(`${API_URL}/api/verify-admin`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    document.getElementById('adminPasswordPrompt').classList.add('hidden');
+                    document.getElementById('adminContent').classList.remove('hidden');
+                    showAdminTab('users');
+                } else {
+                    alert('Incorrect password!');
+                }
+            } catch (e) {
+                console.error('Error verifying admin:', e);
+                alert('Error connecting to server');
+            }
+        }
+
+        async function showAdminTab(tab) {
+            document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            const content = document.getElementById('adminContentArea');
+            
+            if (tab === 'users') {
+                try {
+                    const res = await fetch(`${API_URL}/api/admin/users`);
+                    const data = await res.json();
+                    
+                    content.innerHTML = '<h3 style="padding: 20px; color: #667eea;">All Registered Users</h3>';
+                    
+                    for (let email in data.users) {
+                        const user = data.users[email];
+                        const isOnline = allUsers[email] && allUsers[email].online;
+                        
+                        const item = document.createElement('div');
+                        item.className = 'member-item';
+                        item.innerHTML = `
+                            <div class="member-info">
+                                <img src="${user.picture}" alt="${user.name}">
+                                <div class="member-details">
+                                    <h4>${user.name}<span class="${isOnline ? 'online-badge' : 'offline-badge'}"></span></h4>
+                                    <p>${user.email}</p>
+                                    <p style="font-size: 11px; color: #999;">Joined: ${new Date(user.firstJoined).toLocaleDateString()}</p>
+                                </div>
+                            </div>
+                            <button class="remove-btn" onclick='removeUser("${email}")'>Remove</button>
+                        `;
+                        content.appendChild(item);
+                    }
+                } catch (e) {
+                    console.error('Error loading users:', e);
+                }
+            } else if (tab === 'chats') {
+                try {
+                    const res = await fetch(`${API_URL}/api/admin/messages`);
+                    const data = await res.json();
+                    
+                    content.innerHTML = '<h3 style="padding: 20px; color: #667eea;">All Chat Messages</h3>';
+                    
+                    if (data.messages.length === 0) {
+                        content.innerHTML += '<p style="text-align: center; color: #999; padding: 50px;">No messages yet</p>';
+                        return;
+                    }
+                    
+                    const chatsByPair = {};
+                    
+                    data.messages.forEach(msg => {
+                        const pair = [msg.from, msg.to].sort().join('_');
+                        if (!chatsByPair[pair]) {
+                            chatsByPair[pair] = [];
+                        }
+                        chatsByPair[pair].push(msg);
+                    });
+                    
+                    for (let pair in chatsByPair) {
+                        const msgs = chatsByPair[pair];
+                        const [email1, email2] = pair.split('_');
+                        
+                        const chatDiv = document.createElement('div');
+                        chatDiv.className = 'chat-preview';
+                        chatDiv.innerHTML = `
+                            <div class="chat-preview-header">
+                                <span>${email1} ↔ ${email2}</span>
+                                <span>${msgs.length} messages</span>
+                            </div>
+                        `;
+                        
+                        msgs.slice(-5).forEach(msg => {
+                            const msgDiv = document.createElement('div');
+                            msgDiv.className = 'chat-preview-msg';
+                            msgDiv.innerHTML = `<strong>${msg.message.senderName}:</strong> ${msg.message.text}`;
+                            chatDiv.appendChild(msgDiv);
+                        });
+                        
+                        content.appendChild(chatDiv);
+                    }
+                } catch (e) {
+                    console.error('Error loading messages:', e);
+                }
+            }
+        }
+
+        async function removeUser(email) {
+            if (!confirm(`Remove user ${email}?`)) return;
+            
+            try {
+                const res = await fetch(`${API_URL}/api/admin/remove-user`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    alert('User removed successfully');
+                    showAdminTab('users');
+                } else {
+                    alert('Error removing user');
+                }
+            } catch (e) {
+                console.error('Error removing user:', e);
+            }
+        }
+
+        function logout() {
+            if (!confirm('Are you sure you want to logout? Your data will be cleared.')) return;
+            
+            localStorage.removeItem('webcorg_user');
+            messageHistory = {};
+            allUsers = {};
+            currentUser = null;
+            
+            if (ws) {
+                ws.close();
+            }
+            
+            document.getElementById('homePage').classList.add('hidden');
+            document.getElementById('dashboardBtn').classList.add('hidden');
+            document.getElementById('signInPage').classList.remove('hidden');
+            closeAll();
+        }
+
+        function openInfoModal(type) {
+            document.getElementById(type + 'Modal').classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+            document.getElementById('dashboardSidebar').classList.remove('active');
+        }
+
+        function closeInfoModal(type) {
+            document.getElementById(type + 'Modal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        function closeAll() {
+            document.getElementById('dashboardSidebar').classList.remove('active');
+            document.getElementById('membersWindow').classList.remove('active');
+            document.getElementById('chatWindow').classList.remove('active');
+            document.getElementById('chatHistoryWindow').classList.remove('active');
+            document.getElementById('adminPanel').classList.remove('active');
+            document.getElementById('termsModal').classList.remove('active');
+            document.getElementById('privacyModal').classList.remove('active');
+            document.getElementById('aboutModal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        }
+
+        window.onload = function() {
+            initGoogleSignIn();
+            initWebSocket();
+        };
+    </script>
+</body>
+</html>
