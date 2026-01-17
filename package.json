@@ -1,0 +1,13 @@
+{
+  "name": "webcorg-chat-server",
+  "version": "2.0.0",
+  "description": "Enhanced WebSocket server for WebCorg with persistent storage",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  }
+}
