@@ -13,7 +13,7 @@ const DB_FILE = path.join(__dirname, 'database.json');
 let database = {
     users: {},
     messages: [],
-    adminPassword: 'admin123'
+    adminPassword: 'suyash'  // ✅ Changed to 'suyash'
 };
 
 // Load database
@@ -252,7 +252,7 @@ server.listen(PORT, () => {
     console.log('Server is running on port ' + PORT);
     console.log('WebSocket URL: ws://localhost:' + PORT);
     console.log('HTTP URL: http://localhost:' + PORT);
-    console.log('\nAdmin Password: ' + database.adminPassword);
+    console.log('\n🔐 Admin Password: ' + database.adminPassword);
     console.log('\nWaiting for connections...\n');
 });
 
